@@ -61,6 +61,11 @@ export const DEFAULT_PROXY_DLL: ProxyDllValue = "dxgi.dll";
 
 export const FSR4_VARIANT_OPTIONS = [
   {
+    value: "fsr412-int8-lite",
+    label: "4.1.2 | INT8 Lite",
+    hint: "FSR 4.1.2 INT8 Lite. Uses the same proton-upscalers DLL CachyOS Proton downloads, plus the OptiScaler 10 nightly injector that can select the Lite model. Aimed at APUs and other non-RDNA4 GPUs. Confirm with the FSR4L-i8 watermark.",
+  },
+  {
     value: "rdna23-int8",
     label: "4.0.2c | RDNA2/3 Compatibility",
     hint: "Older compatible runtime for RDNA2/3. In most cases, use the Valve 4.1.1 path for RDNA2 or the regular 4.1.1 driver override.",

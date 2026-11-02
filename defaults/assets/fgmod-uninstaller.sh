@@ -116,6 +116,16 @@ rm -f "nvapi64.dll" "fakenvapi.ini" "fakenvapi.log"
 # === Remove Supporting Libraries ===
 echo " Removing supporting libraries..."
 rm -f "nvngx.dll" "nvngx.ini" "amdxcffx64.dll" "amdxc64.dll"
+fgmod_home="${HOME}/fgmod"
+if [[ -d "$fgmod_home" ]]; then
+  for managed in "$fgmod_home"/fsr4-*/*; do
+    [[ -f "$managed" ]] || continue
+    managed_name="$(basename "$managed")"
+    if [[ -f "$managed_name" ]] && cmp -s "$managed" "$managed_name"; then
+      rm -f "$managed_name"
+    fi
+  done
+fi
 # Only remove files if backups exist (to avoid removing restored originals)
 [[ -f "libxess.dll.b" ]] && rm -f "libxess.dll"
 [[ -f "libxess_dx11.dll.b" ]] && rm -f "libxess_dx11.dll"
@@ -142,7 +152,7 @@ echo " Removing ASI plugins directory..."
 rm -rf "plugins"
 
 # === Remove D3D12_Optiscaler directory (required by v0.9.0-final) ===
-rm -rf "D3D12_Optiscaler"
+rm -rf "D3D12_Optiscaler" "D3D12_OptiScaler"
 
 # === Remove Legacy Files ===
 echo " Removing legacy files..."
@@ -158,6 +168,15 @@ for dll in "${restorable_dlls[@]}"; do
     mv "${dll}.b" "$dll"
     echo " Restored original $dll"
     logger -t fgmod-uninstaller "Restored original $dll"
+  fi
+done
+for backup in *.dll.b *.asi.b; do
+  [[ -f "$backup" ]] || continue
+  original="${backup%.b}"
+  if [[ ! -f "$original" ]]; then
+    mv "$backup" "$original"
+    echo " Restored original $original"
+    logger -t fgmod-uninstaller "Restored original $original"
   fi
 done
 

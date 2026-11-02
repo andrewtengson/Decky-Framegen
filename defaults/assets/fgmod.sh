@@ -172,7 +172,53 @@ PY
 selected_fsr4_variant="$(resolve_fsr4_variant)"
 variant_dir=""
 variant_extra_files=()
+variant_support_replacements=()
+variant_omit_files=()
 variant_ini_overrides=()
+variant_requires_own_files=0
+manifest_loaded=0
+if [[ -f "$fgmod_path/install-manifest.json" && -n "$python_bin" ]]; then
+  manifest_lines=$("$python_bin" - <<PY
+import json
+from pathlib import Path
+selected = "$selected_fsr4_variant"
+try:
+    manifest = json.loads(Path(r"$fgmod_path/install-manifest.json").read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+variant = (manifest.get("fsr4_variants") or {}).get(selected)
+if not isinstance(variant, dict) or not variant.get("dir_name"):
+    raise SystemExit(1)
+print(f"dir\t{variant['dir_name']}")
+if variant.get("injector"):
+    print("own\t1")
+for name in variant.get("omit_support_files") or []:
+    print(f"omit\t{name}")
+for item in variant.get("support_replacements") or []:
+    print(f"replace\t{item.get('name', '')}")
+for item in variant.get("extra_files") or []:
+    print(f"extra\t{item.get('name', '')}")
+for key, value in (variant.get("config_overrides") or {}).items():
+    print(f"override\t{key}={value}")
+PY
+  ) && manifest_loaded=1
+fi
+if [[ "$manifest_loaded" == 1 ]]; then
+  while IFS=$'\t' read -r kind rest; do
+    [[ -n "$kind" ]] || continue
+    case "$kind" in
+      dir)
+        variant_dir="$fgmod_path/$rest"
+        fsr4_upscaler_src="$variant_dir/amd_fidelityfx_upscaler_dx12.dll"
+        ;;
+      own) variant_requires_own_files=1 ;;
+      omit) variant_omit_files+=("$rest") ;;
+      replace) [[ -n "$rest" ]] && variant_support_replacements+=("$rest") ;;
+      extra) [[ -n "$rest" ]] && variant_extra_files+=("$rest") ;;
+      override) variant_ini_overrides+=("$rest") ;;
+    esac
+  done <<< "$manifest_lines"
+else
 case "$selected_fsr4_variant" in
   rdna4-native)
     variant_dir="$fgmod_path/fsr4-rdna4"
@@ -190,49 +236,35 @@ case "$selected_fsr4_variant" in
     variant_ini_overrides+=("FSR.Fsr4ForceModel=2")
     variant_ini_overrides+=("Plugins.LoadCustomAmdxc64OnRdna2=true")
     ;;
+  fsr412-int8-lite)
+    error_exit " FSR 4.1.2 Lite runtime is not installed. Run Setup again."
+    ;;
   *)
     selected_fsr4_variant="rdna23-int8"
     variant_dir="$fgmod_path/fsr4-rdna2-3"
     fsr4_upscaler_src="$variant_dir/amd_fidelityfx_upscaler_dx12.dll"
     ;;
 esac
-[[ -f "$fsr4_upscaler_src" ]] || fsr4_upscaler_src="$fgmod_path/amd_fidelityfx_upscaler_dx12.dll"
+fi
+if [[ ! -f "$fsr4_upscaler_src" ]]; then
+  error_exit " FSR4 variant files for $selected_fsr4_variant are missing. Run Setup again."
+fi
 logger -t fgmod "Using FSR4 variant: $selected_fsr4_variant (source: $fsr4_upscaler_src)"
 
 is_managed_support_file() {
   local existing_file="$1"
-  local filename
+  local filename candidate variant_root
   filename="$(basename "$existing_file")"
-  local candidate
-  if [[ "$filename" == "amd_fidelityfx_upscaler_dx12.dll" ]]; then
-    for candidate in \
-      "$fgmod_path/amd_fidelityfx_upscaler_dx12.dll" \
-      "$fgmod_path/fsr4-rdna2-3/amd_fidelityfx_upscaler_dx12.dll" \
-      "$fgmod_path/fsr4-rdna4/amd_fidelityfx_upscaler_dx12.dll" \
-      "$fgmod_path/fsr4-rdna3-4-official-411/amd_fidelityfx_upscaler_dx12.dll" \
-      "$fgmod_path/fsr4-rdna2-valve-411-pre10/amd_fidelityfx_upscaler_dx12.dll"; do
-      [[ -f "$candidate" && -f "$existing_file" ]] && cmp -s "$existing_file" "$candidate" && return 0
-    done
-    return 1
-  fi
-  if [[ "$filename" == "amdxcffx64.dll" ]]; then
-    for candidate in \
-      "$fgmod_path/amdxcffx64.dll" \
-      "$fgmod_path/fsr4-rdna3-4-official-411/amdxcffx64.dll" \
-      "$fgmod_path/fsr4-rdna2-valve-411-pre10/amdxcffx64.dll"; do
-      [[ -f "$candidate" && -f "$existing_file" ]] && cmp -s "$existing_file" "$candidate" && return 0
-    done
-    return 1
-  fi
-  if [[ "$filename" == "amdxc64.dll" ]]; then
-    for candidate in \
-      "$fgmod_path/fsr4-rdna2-valve-411-pre10/amdxc64.dll"; do
-      [[ -f "$candidate" && -f "$existing_file" ]] && cmp -s "$existing_file" "$candidate" && return 0
-    done
-    return 1
-  fi
-  candidate="$fgmod_path/$filename"
-  [[ -f "$candidate" && -f "$existing_file" ]] && cmp -s "$existing_file" "$candidate"
+  [[ -f "$existing_file" ]] || return 1
+  for candidate in "$fgmod_path/$filename"; do
+    [[ -f "$candidate" ]] && cmp -s "$existing_file" "$candidate" && return 0
+  done
+  for variant_root in "$fgmod_path"/fsr4-*; do
+    [[ -d "$variant_root" ]] || continue
+    candidate="$variant_root/$filename"
+    [[ -f "$candidate" ]] && cmp -s "$existing_file" "$candidate" && return 0
+  done
+  return 1
 }
 
 # === Backup Pre-existing Proxy DLLs Before Cleanup ===
@@ -259,6 +291,18 @@ unset cleanup_file
 
 # === Optional: Backup Original DLLs ===
 original_dlls=("d3dcompiler_47.dll" "amd_fidelityfx_dx12.dll" "amd_fidelityfx_framegeneration_dx12.dll" "amd_fidelityfx_upscaler_dx12.dll" "amdxcffx64.dll" "amdxc64.dll" "amd_fidelityfx_vk.dll")
+declare -A seen_original_dll=()
+for dll in "${original_dlls[@]}"; do
+  seen_original_dll["$dll"]=1
+done
+for managed in "$fgmod_path"/fsr4-*/*; do
+  [[ -f "$managed" ]] || continue
+  managed_name="$(basename "$managed")"
+  [[ "$managed_name" == *.dll && -z "${seen_original_dll[$managed_name]:-}" ]] || continue
+  seen_original_dll["$managed_name"]=1
+  original_dlls+=("$managed_name")
+done
+unset dll managed managed_name
 for dll in "${original_dlls[@]}"; do
   existing_path="$exe_folder_path/$dll"
   backup_path="$exe_folder_path/$dll.b"
@@ -285,6 +329,8 @@ if [[ -n "$variant_dir" && -f "$variant_dir/renames/$dll_name" ]]; then
 elif [[ -n "$variant_dir" && -f "$variant_dir/OptiScaler.dll" ]]; then
   echo " Using variant OptiScaler injector"
   cp "$variant_dir/OptiScaler.dll" "$exe_folder_path/$dll_name" || error_exit " Failed to copy variant OptiScaler.dll as $dll_name"
+elif [[ "$variant_requires_own_files" == 1 ]]; then
+  error_exit " Variant OptiScaler injector for $selected_fsr4_variant is missing. Run Setup again."
 elif [[ -f "$fgmod_path/renames/$dll_name" ]]; then
   echo " Using pre-renamed $dll_name"
   cp "$fgmod_path/renames/$dll_name" "$exe_folder_path/$dll_name" || error_exit " Failed to copy $dll_name"
@@ -294,6 +340,33 @@ else
 fi
 
 # === OptiScaler.ini Handling ===
+previous_fsr4_variant=""
+if [[ -f "$exe_folder_path/FRAMEGEN_PATCH" && -n "$python_bin" ]]; then
+  previous_fsr4_variant=$("$python_bin" - <<PY 2>/dev/null
+import json
+from pathlib import Path
+path = Path(r'''$exe_folder_path/FRAMEGEN_PATCH''')
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+    print(str(data.get('fsr4_variant') or '').strip())
+except Exception:
+    pass
+PY
+)
+fi
+if [[ -n "$previous_fsr4_variant" && "$previous_fsr4_variant" != "$selected_fsr4_variant" && -f "$fgmod_path/install-manifest.json" && -n "$python_bin" ]]; then
+  while IFS= read -r reset_override; do
+    [[ -n "$reset_override" ]] && variant_ini_overrides+=("$reset_override")
+  done < <("$python_bin" - <<PY
+import json
+from pathlib import Path
+manifest = json.loads(Path(r"$fgmod_path/install-manifest.json").read_text(encoding="utf-8"))
+previous = (manifest.get("fsr4_variants") or {}).get("$previous_fsr4_variant") or {}
+for key, value in (previous.get("config_resets") or {}).items():
+    print(f"{key}={value}")
+PY
+)
+fi
 if [[ "$preserve_ini" == "true" && -f "$exe_folder_path/OptiScaler.ini" ]]; then
   echo " Preserving existing OptiScaler.ini (user settings retained)"
   logger -t fgmod "Existing OptiScaler.ini preserved in $exe_folder_path"
@@ -312,6 +385,77 @@ fi
 # an external TTF that is not present. Only normalize the default auto value.
 sed -i 's/^UseHQFont[[:space:]]*=[[:space:]]*auto$/UseHQFont=false/' "$exe_folder_path/OptiScaler.ini" || true
 
+shared_ini_overrides=(
+  "Upscalers.Dx12Upscaler=ffx"
+  "Libraries.OptiDllPath=."
+  "FrameGen.FGInput=upscaler"
+  "FrameGen.FGOutput=fsrfg"
+  "Plugins.LoadAsiPlugins=true"
+  "Menu.UseHQFont=false"
+)
+if [[ -n "$python_bin" ]]; then
+  "$python_bin" - "$exe_folder_path/OptiScaler.ini" "${shared_ini_overrides[@]}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+overrides = sys.argv[2:]
+content = path.read_text(encoding='utf-8', errors='replace')
+newline = '\r\n' if '\r\n' in content else '\n'
+lines = content.splitlines(keepends=True)
+section_pattern = re.compile(r'^\s*\[(?P<section>[^\]]+)\]\s*$')
+
+def ensure_trailing_newline():
+    if lines and not lines[-1].endswith(('\n', '\r')):
+        lines[-1] += newline
+
+def upsert(section, key, value):
+    replacement = f'{key}={value}'
+    key_pattern = re.compile(rf'^(\s*{re.escape(key)}\s*)=.*$')
+    if section is None:
+        for idx, line in enumerate(lines):
+            if key_pattern.match(line):
+                line_ending = '\r\n' if line.endswith('\r\n') else ('\n' if line.endswith('\n') else newline)
+                lines[idx] = f'{replacement}{line_ending}'
+                return
+        ensure_trailing_newline()
+        lines.append(f'{replacement}{newline}')
+        return
+    in_section = False
+    insert_at = None
+    for idx, line in enumerate(lines):
+        match = section_pattern.match(line.strip())
+        if match:
+            if in_section:
+                insert_at = idx
+                break
+            in_section = match.group('section').strip() == section
+            continue
+        if in_section and key_pattern.match(line):
+            line_ending = '\r\n' if line.endswith('\r\n') else ('\n' if line.endswith('\n') else newline)
+            lines[idx] = f'{replacement}{line_ending}'
+            return
+    if insert_at is None:
+        ensure_trailing_newline()
+        if not in_section:
+            lines.append(f'[{section}]{newline}')
+        lines.append(f'{replacement}{newline}')
+        return
+    lines.insert(insert_at, f'{replacement}{newline}')
+
+for override in overrides:
+    key_part, value = override.split('=', 1)
+    if '.' in key_part:
+        section, key = key_part.split('.', 1)
+    else:
+        section, key = None, key_part
+    if key:
+        upsert(section.strip() if section else None, key.strip(), value.strip())
+
+path.write_text(''.join(lines), encoding='utf-8')
+PY
+fi
 if [[ ${#variant_ini_overrides[@]} -gt 0 && -n "$python_bin" ]]; then
   "$python_bin" - "$exe_folder_path/OptiScaler.ini" "${variant_ini_overrides[@]}" <<'PY'
 import re
@@ -413,12 +557,15 @@ else
 fi
 
 # === D3D12_Optiscaler Directory (required for FSR4/FidelityFX DX12 path) ===
-if [[ -d "$fgmod_path/D3D12_Optiscaler" ]]; then
-  echo " Installing D3D12_Optiscaler directory"
-  cp -r "$fgmod_path/D3D12_Optiscaler" "$exe_folder_path/" || true
-  logger -t fgmod "D3D12_Optiscaler directory installed to $exe_folder_path"
+d3d12_src="$fgmod_path/D3D12_OptiScaler"
+[[ -d "$d3d12_src" ]] || d3d12_src="$fgmod_path/D3D12_Optiscaler"
+if [[ -d "$d3d12_src" ]]; then
+  echo " Installing D3D12_OptiScaler directory"
+  rm -rf "$exe_folder_path/D3D12_Optiscaler"
+  cp -r "$d3d12_src" "$exe_folder_path/D3D12_OptiScaler" || error_exit " Failed to copy D3D12_OptiScaler"
+  logger -t fgmod "D3D12_OptiScaler directory installed to $exe_folder_path"
 else
-  echo " No D3D12_Optiscaler directory found in fgmod"
+  error_exit " D3D12_OptiScaler directory missing from fgmod. Run Setup again."
 fi
 
 # === Supporting Libraries ===
@@ -426,10 +573,30 @@ cp -f "$fgmod_path/libxess.dll" "$exe_folder_path/" || true
 cp -f "$fgmod_path/libxess_dx11.dll" "$exe_folder_path/" || true
 cp -f "$fgmod_path/libxess_fg.dll" "$exe_folder_path/" || true
 cp -f "$fgmod_path/libxell.dll" "$exe_folder_path/" || true
-cp -f "$fgmod_path/amd_fidelityfx_dx12.dll" "$exe_folder_path/" || true
-cp -f "$fgmod_path/amd_fidelityfx_framegeneration_dx12.dll" "$exe_folder_path/" || true
-cp -f "$fsr4_upscaler_src" "$exe_folder_path/amd_fidelityfx_upscaler_dx12.dll" || true
+cp -f "$fgmod_path/amd_fidelityfx_loader_dx12.dll" "$exe_folder_path/" || error_exit " Failed to copy FSR4 loader"
+cp -f "$fgmod_path/amd_fidelityfx_framegeneration_dx12.dll" "$exe_folder_path/" || error_exit " Failed to copy FSR4 frame generation"
+for optional_support in amd_fidelityfx_loader_vk.dll amd_fidelityfx_upscaler_vk.dll amd_fidelityfx_framegeneration_vk.dll; do
+  [[ -f "$fgmod_path/$optional_support" ]] && cp -f "$fgmod_path/$optional_support" "$exe_folder_path/"
+done
+if [[ "$variant_requires_own_files" == 1 ]]; then
+  cp -f "$fsr4_upscaler_src" "$exe_folder_path/amd_fidelityfx_upscaler_dx12.dll" || error_exit " Failed to copy FSR4 upscaler"
+else
+  cp -f "$fsr4_upscaler_src" "$exe_folder_path/amd_fidelityfx_upscaler_dx12.dll" || true
+fi
 cp -f "$fgmod_path/amd_fidelityfx_vk.dll" "$exe_folder_path/" || true
+for replacement in "${variant_support_replacements[@]}"; do
+  if [[ ! -f "$variant_dir/$replacement" ]]; then
+    [[ "$variant_requires_own_files" == 1 ]] && error_exit " Missing variant support file: $replacement"
+    continue
+  fi
+  cp -f "$variant_dir/$replacement" "$exe_folder_path/" || error_exit " Failed to copy $replacement"
+done
+for omit_file in "${variant_omit_files[@]}"; do
+  if is_managed_support_file "$exe_folder_path/$omit_file"; then
+    rm -f "$exe_folder_path/$omit_file"
+    logger -t fgmod "Omitted managed support file: $omit_file"
+  fi
+done
 for extra_file in "${variant_extra_files[@]}"; do
   if [[ -f "$variant_dir/$extra_file" ]]; then
     cp -f "$variant_dir/$extra_file" "$exe_folder_path/" || true
@@ -445,10 +612,11 @@ cp -f "$fgmod_path/dlssg_to_fsr3_amd_is_better.dll" "$exe_folder_path/" || true
 # rm -f "$exe_folder_path/nvapi64.dll"
 # echo " Removed legacy nvapi64.dll"
 
-# Copy fakenvapi.dll with original name (v1.3.8.1) 
-cp -f "$fgmod_path/fakenvapi.dll" "$exe_folder_path/" || true
-cp -f "$fgmod_path/fakenvapi.ini" "$exe_folder_path/" || true
-echo " Installed fakenvapi.dll and fakenvapi.ini"
+# OptiScaler 10.x integrates fakenvapi. Copy the old files only when a legacy bundle still has them.
+if [[ -f "$fgmod_path/fakenvapi.dll" ]]; then
+  cp -f "$fgmod_path/fakenvapi.dll" "$exe_folder_path/" || true
+  cp -f "$fgmod_path/fakenvapi.ini" "$exe_folder_path/" || true
+fi
 
 # === Additional Support Files ===
 # cp -f "$fgmod_path/d3dcompiler_47.dll" "$exe_folder_path/" || true

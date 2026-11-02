@@ -1,6 +1,6 @@
 {
   "name": "decky-framegen",
-  "version": "0.17",
+  "version": "0.18",
   "description": "This plugin installs and manages OptiScaler, a tool that enhances upscaling and enables frame generation in a range of DirectX 12 games.",
   "type": "module",
   "scripts": {
@@ -87,6 +87,26 @@
       "sha256hash": "88b9e1be3559737cd205fdf5f2c8550cf1923fb1def4c603e5bf03c3e84131b1",
       "url": "https://github.com/xXJSONDeruloXx/OptiScaler-Bleeding-Edge/releases/download/bins-for-optipatcher-rolling/OptiPatcher_rolling.asi",
       "name": "OptiPatcher_rolling.asi"
+    },
+    {
+      "sha256hash": "cd6dd87bfb026cc94ce337631096a0253d7a8ec4a799d45b76f8aee1b11b93c9",
+      "url": "https://github.com/optiscaler/OptiScaler-nightly/releases/download/nightly-20261101/OptiScaler_v10.0.0-pre1_20261101.7z",
+      "name": "OptiScaler_v10.0.0-pre1_20261101.7z"
+    },
+    {
+      "sha256hash": "f5b20821860ad2ce3ca094bec7b6598129c266ec27a13f0332f07213357e60a0",
+      "url": "https://loathingKernel.github.io/proton-upscalers/fsr_40_up_dx12_v4.1.2_C9B73B38F9F2744C7096DE53429DB6EB.xz",
+      "name": "fsr_40_up_dx12_v4.1.2_C9B73B38F9F2744C7096DE53429DB6EB.xz"
+    },
+    {
+      "sha256hash": "fd4b6199bbf1622470dd598f75665f903e5749f871f8ab5c55482ec5a0662874",
+      "url": "https://loathingKernel.github.io/proton-upscalers/fsr_40_ldr_dx12_v4.1.2_08561837C75E2F9374E48B2320F473B2.xz",
+      "name": "fsr_40_ldr_dx12_v4.1.2_08561837C75E2F9374E48B2320F473B2.xz"
+    },
+    {
+      "sha256hash": "90a6277b9dbe9ef0c9349d9577596410ee4a19ff9ddeba5bb98730ec804bda6c",
+      "url": "https://loathingKernel.github.io/proton-upscalers/fsr_40_fg_dx12_v4.1.2_3F3592DB077231C91AE505E4E93EFCB3.xz",
+      "name": "fsr_40_fg_dx12_v4.1.2_3F3592DB077231C91AE505E4E93EFCB3.xz"
     }
   ]
 }
